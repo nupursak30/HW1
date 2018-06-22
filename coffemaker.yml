@@ -1,0 +1,127 @@
+---
+- name: "Setting up configuration of the Coffemaker server"
+  hosts: coffemaker
+  gather_facts: no
+  vars_prompt:
+    - name: mysql_password
+      prompt: Type your password for mysql server-
+
+  tasks:
+    - name: pinging the coffermaker server
+      ping:    
+    
+    #The code snippet used for java8 installation is
+    #referred from the following website:
+    #https://coderwall.com/p/4ogyuw/ansible-install-java-8
+
+    - name: Adding repo for java 8 installation
+      apt_repository: repo='ppa:webupd8team/java' state=present
+      become: yes
+    
+    - name: Setting the license as selected
+      shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections
+      become: yes
+
+    - name: Setting the license as seen
+      shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 seen true | /usr/bin/debconf-set-selections
+      become: yes
+
+    - name: Installing git,java8,maven,python-lxml packages
+      apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: yes
+        cache_valid_time: 1800
+      become: yes
+      with_items: 
+        - git
+        - oracle-java8-installer
+        - maven
+        - python-lxml
+        
+
+    - name: Cloning the Coffemaker repository
+      git: 
+        repo: 'git@github.ncsu.edu:engr-csc326-staff/Onboarding.git'
+        dest: /home/vagrant/coffemaker_repo
+        clone: yes
+
+    - name: Copying the hibernate file content from templates folder to resources folder
+      copy: 
+        src: /home/vagrant/coffemaker_repo/env/templates/hibernate-template.cfg.xml
+        dest: /home/vagrant/coffemaker_repo/CoffeeMaker/src/main/resources/hibernate.cfg.xml
+        remote_src: yes
+
+    #Before using the xml module, we need to have python-lxml package
+    #already installed in the system
+    - name: Updating the database password in the hibernate config file
+      xml:
+        path: /home/vagrant/coffemaker_repo/CoffeeMaker/src/main/resources/hibernate.cfg.xml
+        xpath: //property[@name='hibernate.connection.password']
+        value: "{{ mysql_password }}"
+        
+    
+    #The below code snippet was referred from the following website:
+    #http://mysql.freeideas.cz/subdom/mysql/2017/07/26/install-latest-mysql-5-7-on-remote-instance-using-ansible/
+    - name: Adding the MYSQL repo
+      get_url:
+        url: https://dev.mysql.com/get/mysql-apt-config_0.8.9-1_all.deb
+        dest: /home/vagrant
+        mode: 0440
+      become: true
+
+    - name: Installing MYSQL repo
+      apt: "deb=/home/vagrant/mysql-apt-config_0.8.9-1_all.deb"
+      become: true
+
+    - name: install python-mysqldb
+      apt:
+        name: python-mysqldb
+        state: present
+        update_cache: yes
+      become: true 
+      
+    - name: Checking MYSQL version
+      command: bash -c "apt-cache showpkg mysql-server|grep 5.7|head -1|cut -d' ' -f1"
+      register: mysqlVersion
+    - debug: msg="{{ mysqlVersion.stdout }}"
+
+    - name: Installing MYSQL 5.7
+      apt:
+        name: mysql-server={{ mysqlVersion.stdout }} 
+        state: present
+        update_cache: yes
+        cache_valid_time: 1800
+      become: true
+    
+    - name: Updating MYSQL password for root user
+      become: true
+      mysql_user:
+        name: root
+        host: "{{ item }}"
+        password: "{{ mysql_password }}"
+        login_user: root
+        login_password: "{{ mysql_password }}"
+        check_implicit_admin: yes
+        priv: "*.*:ALL,GRANT"
+      with_items:
+        - 127.0.0.1
+        - ::1
+        - localhost
+
+    - name: Start the MYSQL service
+      become: true
+      service:
+        name: mysql
+        state: started
+        enabled: true
+
+    - name: Starting the maven test
+      shell: nohup mvn spring-boot:run &
+      args: 
+        chdir: /home/vagrant/coffemaker_repo/CoffeeMaker
+
+    
+
+
+    

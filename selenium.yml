@@ -1,0 +1,106 @@
+---
+- name: "Setting up configuration of the Selenium server"
+  hosts: selenium
+  gather_facts: no
+  vars_prompt:
+    - name: seleniumIP
+      prompt: Type the IP address of the COFFEMAKER server-
+      private: no
+
+  #Setting the environment variable based on the Selenium server IP address provided by the user
+  environment:
+    SELENIUM_URL: "http://{{ seleniumIP }}:8080/"
+
+  tasks:
+  - name: pinging the selenium server
+    ping:
+  
+  - shell: echo $SELENIUM_URL
+    register: env_result
+    
+  - name: Checking the value set for the environment variable
+    debug: msg={{ env_result.stdout }}
+
+  #The code snippet used for java8 installation is
+  #referred from the following website:
+  #https://coderwall.com/p/4ogyuw/ansible-install-java-8
+
+  - name: Adding repo for java 8 installation
+    apt_repository: repo='ppa:webupd8team/java' state=present
+    become: yes
+    
+  - name: Setting the license as selected
+    shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections
+    become: yes
+
+  - name: Setting the license as seen
+    shell: /bin/echo debconf shared/accepted-oracle-license-v1-1 seen true | /usr/bin/debconf-set-selections
+    become: yes
+
+  - name: Adding repo for maven3 installation
+    apt_repository: repo='ppa:andrei-pozolotin/maven3' state=present
+    become: yes
+  
+  - name: Running apt-get update for maven3 installation
+    apt:
+      update_cache: yes
+    become: yes
+
+  - name: Installing git,java8,maven3 packages
+    apt:
+      name: "{{ item }}"
+      state: present
+      update_cache: yes
+      cache_valid_time: 1800
+    become: yes
+    with_items: 
+        - git
+        - oracle-java8-installer
+        - maven3
+
+  - name: Cloning the Coffemaker repository
+    git: 
+      repo: 'https://github.com/CSC-326/Onboarding-Selenium.git'
+      dest: /home/vagrant/selenium_repo
+      force: yes
+      clone: yes
+    
+
+  #Installing google chrome using stable google chrome deb packages
+  - name: Adding the google chrome repo
+    get_url:
+      url: https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+      dest: /home/vagrant
+      mode: 0440
+    become: yes
+
+  - name: Installing google chrome repo
+    apt: "deb=/home/vagrant/google-chrome-stable_current_amd64.deb"
+    become: yes
+
+  - blockinfile:
+      path: /home/vagrant/selenium_repo/src/src/test/java/selenium/tests/WebTest.java
+      insertafter: 'headless'
+      marker: "// {mark} BLOCK INSERTED BY ANSIBLE"
+      block: |
+        options.addArguments( "no-sandbox" );
+    become: yes
+      
+  #Changing the IP address from localhost to the Coffemaker server's IP address
+  - replace:
+      path: /home/vagrant/selenium_repo/src/src/test/java/selenium/tests/WebTest.java 
+      regexp: '"http://localhost:8080/"'
+      replace: 'System.getenv("SELENIUM_URL")'
+      backup: yes
+    become: yes
+  
+  #Start running the selenium test cases
+  - name: Start running the selenium test cases for the Onboarding Project
+    shell: mvn test
+    args:
+      chdir: /home/vagrant/selenium_repo/src
+    become: yes
+    register: build_result
+
+  - name: Output of the Selenium test cases
+    debug: msg={{ build_result.stdout }} 
